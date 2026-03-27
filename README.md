@@ -2,7 +2,7 @@
 
 Code and data accompanying the paper:
 
-**"Spinning Billiards"**
+**Spinning Billiards**
 Jacob S. Lund, Jeff Murugan, Jonathan P. Shock
 
 ## Overview
@@ -48,12 +48,6 @@ python precompute_data.py
 
 This produces `unified_billiards_data.npz` (~76 MB), which is not included in the repository due to its size. The smaller per-figure datasets in `experiment_results/` are included and sufficient for `make_plots.py`.
 
-## Key Physics
-
-- **Collision law**: couples translational and rotational degrees of freedom via $\alpha$
-- **Conserved quantity**: $Q = v_\parallel - \alpha u$ at each collision
-- **Energy**: $E = \frac{1}{2}v^2 + \frac{1}{2}\alpha u^2$ conserved
-- **Lyapunov exponents**: computed via Benettin renormalisation algorithm
 
 ## License
 
