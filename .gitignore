@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+*.npz
+plots/
+plots_v2/
+experiment_results/
