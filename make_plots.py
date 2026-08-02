@@ -5,6 +5,7 @@ Generates all figures from scratch with consistent styling.
 """
 
 import numpy as np
+from numba import njit, prange
 import math
 import time
 import os
@@ -16,6 +17,7 @@ from matplotlib.patches import Circle, Arc
 from matplotlib.collections import LineCollection
 
 from spinning_billiards import (
+    _next_collision, _reflect,
     simulate, lyapunov, lyapunov_ensemble,
     phase_space_separation, poincare_section, warmup,
     CIRCLE, RECTANGLE, STADIUM, SINAI,
@@ -124,7 +126,7 @@ def fig_trajectories():
         ("Circle",    CIRCLE,    0.0, 0.0,  0.0, 0.5),
         ("Rectangle", RECTANGLE, 1.0, 1.0,  0.2, 0.3),
         ("Stadium",   STADIUM,   1.0, 0.0,  0.2, 0.3),
-        ("Sinai",     SINAI,     2.0, 1.0,  0.5, 0.5),
+        ("Sinai",     SINAI,     2.0, 1.0,  1.5, 0.5),
     ]
     theta0 = 0.8
 
@@ -134,10 +136,20 @@ def fig_trajectories():
     for row, (gname, geo, p1, p2, x0, y0) in enumerate(geos):
         for col, a in enumerate(alpha_vals):
             ax = axes[row, col]
-            vx0 = math.cos(theta0)
-            vy0 = math.sin(theta0)
+            # Spin the ball up: u0 = u_max/4, the mean |u| of the Lyapunov
+            # ensembles (which draw u ~ U(-u_max/2, u_max/2)). u0 = 0 is a
+            # degenerate slice: at alpha = 1 it collapses the rectangle orbit
+            # to a line (v_par -> -u annihilates the tangential motion).
+            if a > 0.0:
+                u0 = 0.25 / math.sqrt(a)
+                v0 = math.sqrt(1.0 - a * u0 * u0)
+            else:
+                u0 = 0.0
+                v0 = 1.0
+            vx0 = v0 * math.cos(theta0)
+            vy0 = v0 * math.sin(theta0)
             xs, ys, vxs, vys, us, ts, ws = simulate(
-                n_coll, x0, y0, vx0, vy0, 0.0, a, geo, p1, p2)
+                n_coll, x0, y0, vx0, vy0, u0, a, geo, p1, p2)
 
             # Color segments by collision number
             points = np.column_stack([xs, ys]).reshape(-1, 1, 2)
@@ -159,12 +171,13 @@ def fig_trajectories():
             ax.set_xticks([])
             ax.set_yticks([])
             if row == 0:
-                ax.set_title(f'$\\alpha = {a}$', fontsize=12)
+                ax.set_title(f'$\\alpha = {a}$')
             if col == 0:
-                ax.set_ylabel(gname, fontsize=12, fontweight='bold')
+                ax.set_ylabel(gname, fontweight='bold')
 
     fig.suptitle(f'Trajectory gallery ({n_coll} collisions, '
-                 r'$\theta_0=0.8$, $u_0=0$)', fontsize=14, y=1.01)
+                 r'$\theta_0=0.8$, $u_0=u_{\max}/4$; position projection '
+                 r'of the 5D state)', y=1.01)
     plt.tight_layout()
     _save(fig, "fig1_trajectories")
 
@@ -229,14 +242,13 @@ def fig_lyapunov_vs_alpha():
                             label=f'{gname} ($\\lambda \\approx 0$)')
 
             ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5, zorder=0)
-            ax.set_xlabel(r'Spin coupling $\alpha$', fontsize=12)
-            ax.set_ylabel(r'Lyapunov exponent $\lambda$', fontsize=12)
-            ax.legend(fontsize=8, loc='upper right')
+            ax.set_xlabel(r'Spin coupling $\alpha$')
+            ax.set_ylabel(r'Lyapunov exponent $\lambda$')
+            ax.legend(loc='upper right')
             ax.set_xlim(-0.02, 1.02)
             ax.set_ylim(-0.02, 0.50)
             ax.set_title(f'Ensemble-averaged Lyapunov exponent\n'
-                         f'({n_ics:,} ICs, {n_steps:,} collisions per IC)',
-                         fontsize=11)
+                         f'({n_ics:,} ICs, {n_steps:,} collisions per IC)')
             plt.tight_layout()
             _save(fig, "fig2_lyapunov_vs_alpha")
             return
@@ -297,14 +309,13 @@ def fig_lyapunov_vs_alpha():
                          elinewidth=0.7, capthick=0.7)
 
     ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5, zorder=0)
-    ax.set_xlabel(r'Spin coupling $\alpha$', fontsize=12)
-    ax.set_ylabel(r'Lyapunov exponent $\lambda$', fontsize=12)
-    ax.legend(fontsize=8, loc='upper right')
+    ax.set_xlabel(r'Spin coupling $\alpha$')
+    ax.set_ylabel(r'Lyapunov exponent $\lambda$')
+    ax.legend(loc='upper right')
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(-0.02, 0.50)
     ax.set_title(f'Ensemble-averaged Lyapunov exponent\n'
-                 f'({n_ics:,} ICs, {n_steps:,} collisions per IC)',
-                 fontsize=11)
+                 f'({n_ics:,} ICs, {n_steps:,} collisions per IC)')
 
     plt.tight_layout()
     _save(fig, "fig2_lyapunov_vs_alpha")
@@ -409,27 +420,25 @@ def fig_poincare_sections():
             u_lim = max(abs(all_u.min()), abs(all_u.max()), 0.01)
             sc.set_clim(-u_lim, u_lim)
 
-            ax.set_xlabel(r'Arc length $s$', fontsize=10)
+            ax.set_xlabel(r'Arc length $s$')
             if col == 0:
-                ax.set_ylabel(r'$v_\parallel$', fontsize=11)
+                ax.set_ylabel(r'$v_\parallel$')
 
             if row == 0:
-                ax.set_title(f'$\\alpha = {alpha}$', fontsize=12)
+                ax.set_title(f'$\\alpha = {alpha}$')
 
             # Add colorbar on rightmost column
             if col == 2:
                 cb = fig.colorbar(sc, ax=ax, shrink=0.85, pad=0.02)
-                cb.set_label(r'Spin $u$', fontsize=9)
+                cb.set_label(r'Spin $u$')
 
         # Row label
         axes[row, 0].annotate(gname, xy=(-0.25, 0.5),
-                              xycoords='axes fraction',
-                              fontsize=13, fontweight='bold',
+                              xycoords='axes fraction', fontweight='bold',
                               ha='center', va='center', rotation=90)
 
     fig.suptitle(f'Poincaré sections (Birkhoff coordinates)\n'
-                 f'{n_ics} ICs × {n_collisions:,} collisions, colored by spin $u$',
-                 fontsize=13)
+                 f'{n_ics} ICs × {n_collisions:,} collisions, colored by spin $u$')
     plt.tight_layout()
     _save(fig, "fig3_poincare_sections")
 
@@ -510,23 +519,23 @@ def fig_ftle():
                     f'mean $= {mean_val:.3f}$\n'
                     f'median $= {median_val:.3f}$\n'
                     f'{frac_chaotic:.0f}% chaotic',
-                    transform=ax.transAxes, ha='right', va='top', fontsize=8,
+                    transform=ax.transAxes, ha='right', va='top',
                     bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
                               edgecolor='0.7', alpha=0.85))
 
-            ax.set_xlabel(r'$\lambda$', fontsize=11)
+            ax.set_xlabel(r'$\lambda$')
             if j % 3 == 0:
-                ax.set_ylabel('Density', fontsize=11)
-            ax.set_title(f'$\\alpha = {a}$', fontsize=12)
+                ax.set_ylabel('Density')
+            ax.set_title(f'$\\alpha = {a}$')
 
         # Add legend from first panel
-        axes[0].legend(fontsize=7, loc='upper left')
+        axes[0].legend(loc='upper left')
 
         dt = time.perf_counter() - t0
         print(f"  {gname}: {dt:.1f}s")
 
         fig.suptitle(f'{gname}: FTLE distributions '
-                     f'({n_ics:,} ICs, {n_steps:,} collisions)', fontsize=14)
+                     f'({n_ics:,} ICs, {n_steps:,} collisions)')
         plt.tight_layout()
         _save(fig, f"fig3_ftle_{gname.lower()}")
 
@@ -562,13 +571,13 @@ def fig_phase_separation():
         dt = time.perf_counter() - t0
         print(f"  {gname}: {dt:.1f}s")
 
-        ax.set_xlabel('Collisions', fontsize=11)
-        ax.set_ylabel(r'$\ln(d_n/d_0)$', fontsize=11)
-        ax.set_title(gname, fontsize=12, fontweight='bold')
-        ax.legend(fontsize=8, ncol=2)
+        ax.set_xlabel('Collisions')
+        ax.set_ylabel(r'$\ln(d_n/d_0)$')
+        ax.set_title(gname, fontweight='bold')
+        ax.legend(ncol=2)
 
     fig.suptitle(f'Phase-space separation ({n_ics:,} ICs, {n_coll} collisions, '
-                 r'$\delta_0=10^{-7}$)', fontsize=13)
+                 r'$\delta_0=10^{-7}$)')
     plt.tight_layout()
     _save(fig, "fig4_phase_separation")
 
@@ -649,11 +658,11 @@ def fig_chaotic_fraction():
         ax.plot(alpha_vals, frac_by_thresh[main_thresh], '-', color=c,
                 linewidth=1.8, label=gname)
 
-    ax.set_xlabel(r'Spin coupling $\alpha$', fontsize=12)
-    ax.set_ylabel('Chaotic fraction (%)', fontsize=12)
+    ax.set_xlabel(r'Spin coupling $\alpha$')
+    ax.set_ylabel('Chaotic fraction (%)')
     ax.set_ylim(55, 102)
     ax.set_xlim(-0.02, 1.02)
-    ax.legend(fontsize=10, loc='lower left')
+    ax.legend(loc='lower left')
     ax.tick_params(labelsize=10)
 
     plt.tight_layout()
@@ -698,12 +707,12 @@ def fig_convergence():
         print(f"  {gname}: {dt:.1f}s")
 
         ax.set_xscale('log')
-        ax.set_xlabel('Number of collisions', fontsize=12)
-        ax.set_ylabel(r'LCN (ensemble mean)', fontsize=12)
-        ax.set_title(gname, fontsize=13, fontweight='bold')
-        ax.legend(fontsize=10)
+        ax.set_xlabel('Number of collisions')
+        ax.set_ylabel(r'LCN (ensemble mean)')
+        ax.set_title(gname, fontweight='bold')
+        ax.legend()
 
-    fig.suptitle(f'LCN convergence ({n_ics} ICs per point)', fontsize=13)
+    fig.suptitle(f'LCN convergence ({n_ics} ICs per point)')
     plt.tight_layout()
     _save(fig, "fig6_convergence")
 
@@ -726,7 +735,7 @@ def fig_energy():
         ("Circle",    CIRCLE,    0.0, 0.0, 0.0, 0.5),
         ("Rectangle", RECTANGLE, 1.0, 1.0, 0.2, 0.3),
         ("Stadium",   STADIUM,   1.0, 0.0, 0.2, 0.3),
-        ("Sinai",     SINAI,     2.0, 1.0, 0.5, 0.5),
+        ("Sinai",     SINAI,     2.0, 1.0, 1.5, 0.5),
     ]
 
     for idx, (gname, geo, p1, p2, x0, y0) in enumerate(geos):
@@ -745,15 +754,15 @@ def fig_energy():
             ax.semilogy(np.arange(len(err)), err, linewidth=0.5,
                        color=color, alpha=0.7, label=f'$\\alpha={a}$')
 
-        ax.set_xlabel('Collision', fontsize=11)
-        ax.set_ylabel(r'$|E - E_0|$', fontsize=11)
-        ax.set_title(gname, fontsize=12, fontweight='bold')
+        ax.set_xlabel('Collision')
+        ax.set_ylabel(r'$|E - E_0|$')
+        ax.set_title(gname, fontweight='bold')
         ax.set_ylim(1e-20, 1e-10)
         if idx == 0:
-            ax.legend(fontsize=8, ncol=2)
+            ax.legend(ncol=2)
 
     fig.suptitle(f'Energy conservation error ({n_coll:,} collisions, '
-                 r'$\theta_0=0.8$, $u_0=0$)', fontsize=13)
+                 r'$\theta_0=0.8$, $u_0=0$)')
     plt.tight_layout()
     _save(fig, "fig7_energy")
 
@@ -794,12 +803,11 @@ def fig_geometry_scan():
                              color=colors[k], label=f'$a = {a_geo}$',
                              elinewidth=0.6, capthick=0.6)
 
-            ax.set_xlabel(r'$\alpha$ (spin coupling)', fontsize=12)
-            ax.set_ylabel(r'$\lambda$ (Lyapunov exponent)', fontsize=12)
+            ax.set_xlabel(r'$\alpha$ (spin coupling)')
+            ax.set_ylabel(r'$\lambda$ (Lyapunov exponent)')
             ax.set_title(f'Stadium: $\\lambda(\\alpha)$ vs geometry parameter $a$\n'
-                         f'({n_ics:,} ICs, {n_steps:,} collisions)',
-                         fontsize=12)
-            ax.legend(fontsize=10)
+                         f'({n_ics:,} ICs, {n_steps:,} collisions)')
+            ax.legend()
             ax.set_ylim(bottom=0)
 
             plt.tight_layout()
@@ -831,12 +839,11 @@ def fig_geometry_scan():
                      capsize=2, linewidth=1.2, color=colors[k],
                      label=f'$a = {a_geo}$', elinewidth=0.6, capthick=0.6)
 
-    ax.set_xlabel(r'$\alpha$ (spin coupling)', fontsize=12)
-    ax.set_ylabel(r'$\lambda$ (Lyapunov exponent)', fontsize=12)
+    ax.set_xlabel(r'$\alpha$ (spin coupling)')
+    ax.set_ylabel(r'$\lambda$ (Lyapunov exponent)')
     ax.set_title(f'Stadium: $\\lambda(\\alpha)$ vs geometry parameter $a$\n'
-                 f'({n_ics} ICs, {n_steps:,} collisions)',
-                 fontsize=12)
-    ax.legend(fontsize=10)
+                 f'({n_ics} ICs, {n_steps:,} collisions)')
+    ax.legend()
     ax.set_ylim(bottom=0)
 
     plt.tight_layout()
@@ -905,13 +912,12 @@ def fig_universality_collapse():
                      capsize=2, linewidth=1.2, color=colors[k],
                      label=f'$a = {a_geo}$', elinewidth=0.6, capthick=0.6)
 
-    ax.set_xlabel(r'Spin coupling $\alpha$', fontsize=12)
-    ax.set_ylabel(r'$\lambda(\alpha) / \lambda(0)$', fontsize=12)
-    ax.set_title(r'Normalized $\lambda(\alpha)/\lambda(0)$ across stadium geometries',
-                 fontsize=11)
+    ax.set_xlabel(r'Spin coupling $\alpha$')
+    ax.set_ylabel(r'$\lambda(\alpha) / \lambda(0)$')
+    ax.set_title(r'Normalized $\lambda(\alpha)/\lambda(0)$ across stadium geometries')
     ax.set_xlim(-0.02, 1.02)
     ax.set_ylim(0, 1.15)
-    ax.legend(fontsize=9, loc='upper right')
+    ax.legend(loc='upper right')
     ax.axhline(y=1, color='gray', linestyle='-', linewidth=0.5, alpha=0.3)
 
     plt.tight_layout()
@@ -1002,11 +1008,11 @@ def fig_conserved_quantity():
             label=f'Wall transition ({len(dQ_diff):,})', edgecolor='none')
 
     ax.set_xscale('log')
-    ax.set_xlabel(r'$|\Delta Q| = |Q_{n+1} - Q_n|$', fontsize=12)
-    ax.set_ylabel('Count', fontsize=12)
+    ax.set_xlabel(r'$|\Delta Q| = |Q_{n+1} - Q_n|$')
+    ax.set_ylabel('Count')
     ax.set_title(r'Stadium: inter-collision $\Delta Q$ distribution'
-                 r' ($\alpha=0.5$, $10{,}000$ collisions)', fontsize=12)
-    ax.legend(fontsize=10)
+                 r' ($\alpha=0.5$, $10{,}000$ collisions)')
+    ax.legend()
     ax.set_xlim(1e-18, 10)
 
     plt.tight_layout()
@@ -1065,15 +1071,15 @@ def fig_lcn_traces():
         dt = time.perf_counter() - t0
         print(f"  {gname}: {dt:.1f}s ({n_ics} ICs x {len(alpha_vals)} alpha)")
 
-        ax.set_xlabel('$t$', fontsize=11)
-        ax.set_ylabel(r'$\lambda(t)$', fontsize=11)
+        ax.set_xlabel('$t$')
+        ax.set_ylabel(r'$\lambda(t)$')
         ax.set_xlim(0, 1000)
         ax.set_ylim(bottom=0)
-        ax.set_title(gname, fontsize=12, fontweight='bold')
-        ax.legend(fontsize=8, ncol=2)
+        ax.set_title(gname, fontweight='bold')
+        ax.legend(ncol=2)
 
     fig.suptitle(f'LCN convergence traces ({n_steps:,} collisions, '
-                 f'{n_ics} ICs)', fontsize=13)
+                 f'{n_ics} ICs)')
     plt.tight_layout()
     _save(fig, "fig10_lcn_traces")
 
@@ -1082,13 +1088,31 @@ def fig_lcn_traces():
 #  Appendix figure: Collision rate vs α
 # =====================================================================
 
+@njit(parallel=True, cache=True)
+def _rate_kernel(n_coll, ics, alpha, geo, p1, p2):
+    """Collision rate per IC, no trajectory storage."""
+    n = ics.shape[0]
+    rates = np.empty(n)
+    for k in prange(n):
+        x = ics[k, 0]; y = ics[k, 1]
+        vx = ics[k, 2]; vy = ics[k, 3]; u = ics[k, 4]
+        t = 0.0
+        for i in range(n_coll):
+            xn, yn, dt, tx, ty, nx, ny, w = _next_collision(
+                x, y, vx, vy, geo, p1, p2)
+            vx, vy, u = _reflect(vx, vy, u, alpha, tx, ty, nx, ny)
+            x = xn; y = yn; t += dt
+        rates[k] = n_coll / t if t > 0 else np.nan
+    return rates
+
+
 def fig_collision_rate():
     """Collision rate (collisions per unit time) vs α for Stadium and Sinai."""
     print("\n[Appendix] Collision rate vs alpha")
 
     alpha_vals = np.linspace(0.0, 1.0, 50)
     n_collisions = 10000
-    n_ics = 100000
+    n_ics = 1000000
 
     fig, ax = plt.subplots(figsize=(7, 4.5))
 
@@ -1101,17 +1125,10 @@ def fig_collision_rate():
         rates_std = np.empty(len(alpha_vals))
 
         for j, a in enumerate(alpha_vals):
-            ic_rates = np.empty(n_ics)
+            ics = np.empty((n_ics, 5))
             for k in range(n_ics):
-                x0, y0, vx0, vy0, u0 = _random_ic_for_poincare(
-                    geo, p1, p2, a)
-                xs, ys, vxs, vys, us, ts, ws = simulate(
-                    n_collisions, x0, y0, vx0, vy0, u0, a, geo, p1, p2)
-                total_time = ts[-1] - ts[0]
-                if total_time > 0:
-                    ic_rates[k] = n_collisions / total_time
-                else:
-                    ic_rates[k] = np.nan
+                ics[k] = _random_ic_for_poincare(geo, p1, p2, a)
+            ic_rates = _rate_kernel(n_collisions, ics, a, geo, p1, p2)
             ic_rates = ic_rates[np.isfinite(ic_rates)]
             rates_mean[j] = np.mean(ic_rates)
             rates_std[j] = np.std(ic_rates) / max(1, np.sqrt(len(ic_rates)))
@@ -1121,19 +1138,21 @@ def fig_collision_rate():
 
         c = GEO_COLORS[gname]
 
-        # Plot alpha>0 points connected with line
+        # Plot alpha>0 as a plain line (SEM far below line width)
         pos_mask = alpha_vals > 0
-        ax.errorbar(alpha_vals[pos_mask], rates_mean[pos_mask],
-                     yerr=rates_std[pos_mask], fmt='o-',
-                     markersize=3, capsize=2, linewidth=1.3, color=c,
-                     label=gname, elinewidth=0.7, capthick=0.7)
+        ax.plot(alpha_vals[pos_mask], rates_mean[pos_mask], '-',
+                linewidth=1.4, color=c, label=gname)
 
         # Mark alpha=0 value on y-axis with a triangle marker
         ax.plot(0, rates_mean[0], marker='<', markersize=7, color=c,
                 zorder=5, clip_on=False)
         ax.annotate(f'{rates_mean[0]:.3f}', xy=(0, rates_mean[0]),
-                    xytext=(5, 0), textcoords='offset points',
-                    fontsize=8, color=c, va='center')
+                    xytext=(5, 0), textcoords='offset points', color=c, va='center')
+
+        np.savez(os.path.join(DATADIR if 'DATADIR' in dir() else 'experiment_results',
+                              f'collision_rate_1e6_{gname.lower()}.npz'),
+                 alpha=alpha_vals, mean=rates_mean, sem=rates_std,
+                 n_ics=n_ics, n_collisions=n_collisions)
 
         # Report variation excluding alpha=0
         rate_min_pos = rates_mean[pos_mask].min()
@@ -1142,12 +1161,9 @@ def fig_collision_rate():
         print(f"    Rate range (α>0): {rate_min_pos:.3f} - {rate_max_pos:.3f} "
               f"(variation: {variation_pos:.1f}%)")
 
-    ax.set_xlabel(r'Spin coupling $\alpha$', fontsize=12)
-    ax.set_ylabel('Collision rate (collisions / time)', fontsize=12)
-    ax.set_title(f'Mean collision rate vs $\\alpha$\n'
-                 f'({n_ics:,} ICs, {n_collisions:,} collisions per IC)',
-                 fontsize=11)
-    ax.legend(fontsize=10)
+    ax.set_xlabel(r'Spin coupling $\alpha$')
+    ax.set_ylabel('Collision rate')
+    ax.legend()
     ax.set_xlim(-0.02, 1.02)
 
     plt.tight_layout()
@@ -1223,16 +1239,15 @@ def fig_dh_scaling():
                            edgecolors='0.3', linewidths=0.4,
                            vmin=0, vmax=1, label=gname)
 
-            ax.set_xlabel(r'Spin coupling $\alpha$', fontsize=12)
-            ax.set_ylabel(r'$\lambda \cdot f_{\rm chaotic}$', fontsize=12)
+            ax.set_xlabel(r'Spin coupling $\alpha$')
+            ax.set_ylabel(r'$\lambda \cdot f_{\rm chaotic}$')
             ax.set_title(r'DH scaling test: $\lambda \cdot f_{\rm chaotic}$ vs $\alpha$'
-                         f'\n({n_ics:,} ICs, {n_steps:,} collisions, threshold={threshold})',
-                         fontsize=11)
+                         f'\n({n_ics:,} ICs, {n_steps:,} collisions, threshold={threshold})')
             ax.set_xlim(-0.02, 1.02)
-            ax.legend(fontsize=10)
+            ax.legend()
             if sc is not None:
                 cb = fig.colorbar(sc, ax=ax, shrink=0.85, pad=0.02)
-                cb.set_label(r'$\alpha$', fontsize=10)
+                cb.set_label(r'$\alpha$')
 
             plt.tight_layout()
             _save(fig, "figA_dh_scaling")
@@ -1290,16 +1305,15 @@ def fig_dh_scaling():
                    edgecolors='0.3', linewidths=0.4,
                    vmin=0, vmax=1, label=gname)
 
-    ax.set_xlabel(r'Spin coupling $\alpha$', fontsize=12)
-    ax.set_ylabel(r'$\lambda \cdot f_{\rm chaotic}$', fontsize=12)
+    ax.set_xlabel(r'Spin coupling $\alpha$')
+    ax.set_ylabel(r'$\lambda \cdot f_{\rm chaotic}$')
     ax.set_title(r'DH scaling test: $\lambda \cdot f_{\rm chaotic}$ vs $\alpha$'
-                 f'\n({n_ics:,} ICs, {n_steps:,} collisions, threshold={threshold})',
-                 fontsize=11)
+                 f'\n({n_ics:,} ICs, {n_steps:,} collisions, threshold={threshold})')
     ax.set_xlim(-0.02, 1.02)
-    ax.legend(fontsize=10)
+    ax.legend()
     if sc is not None:
         cb = fig.colorbar(sc, ax=ax, shrink=0.85, pad=0.02)
-        cb.set_label(r'$\alpha$', fontsize=10)
+        cb.set_label(r'$\alpha$')
 
     plt.tight_layout()
     _save(fig, "figA_dh_scaling")
@@ -1317,7 +1331,7 @@ def fig_lyapunov_spectrum():
 
     alpha_vals = np.linspace(0.0, 1.0, 21)
     n_steps = 50000
-    n_ics = 50
+    n_ics = 2000
 
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
 
@@ -1353,14 +1367,14 @@ def fig_lyapunov_spectrum():
                     linewidth=1.2, color=colors[k], label=labels[k])
 
         ax.axhline(y=0, color='gray', linestyle='--', linewidth=0.5)
-        ax.set_xlabel(r'$\alpha$ (spin coupling)', fontsize=12)
-        ax.set_ylabel(r'Lyapunov exponent', fontsize=12)
-        ax.set_title(gname, fontsize=12, fontweight='bold')
-        ax.legend(fontsize=9, ncol=2)
+        ax.set_xlabel(r'$\alpha$ (spin coupling)')
+        ax.set_ylabel(r'Lyapunov exponent')
+        ax.set_title(gname, fontweight='bold')
+        ax.legend(ncol=2)
         ax.set_xlim(-0.02, 1.02)
 
     fig.suptitle(f'Full Lyapunov spectrum ($n={n_ics}$ ICs, '
-                 f'{n_steps:,} collisions)', fontsize=13)
+                 f'{n_steps:,} collisions)')
     plt.tight_layout()
     _save(fig, "figA_lyapunov_spectrum")
 
@@ -1422,8 +1436,8 @@ def fig_hero():
     ax_a.set_ylabel(r'Lyapunov exponent $\lambda$')
     ax_a.set_xlim(-0.02, 1.02)
     ax_a.set_ylim(-0.02, 0.50)
-    ax_a.set_title('(a) Lyapunov exponent vs $\\alpha$', fontsize=11)
-    ax_a.legend(fontsize=8)
+    ax_a.set_title('(a) Lyapunov exponent vs $\\alpha$')
+    ax_a.legend()
 
     # ─── (b,c,d) FTLE for Stadium α=0, 0.5, 1.0 ───
     alpha_ftle = [0.0, 0.5, 1.0]
@@ -1446,13 +1460,13 @@ def fig_hero():
         frac = np.mean(lcns_finite > 0.01) * 100
         ax.text(0.97, 0.95,
                 f'$\\langle\\lambda\\rangle={mean_val:.3f}$\n{frac:.0f}% chaotic',
-                transform=ax.transAxes, ha='right', va='top', fontsize=9,
+                transform=ax.transAxes, ha='right', va='top',
                 bbox=dict(boxstyle='round,pad=0.3', facecolor='white',
                           edgecolor='0.7', alpha=0.85))
         ax.set_xlabel(r'$\lambda$')
         if j == 0:
             ax.set_ylabel('Density')
-        ax.set_title(f'{labels[j]} Stadium FTLE, $\\alpha={a}$', fontsize=11)
+        ax.set_title(f'{labels[j]} Stadium FTLE, $\\alpha={a}$')
 
     _save(fig, "hero_figure")
 
