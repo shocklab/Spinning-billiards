@@ -7,28 +7,25 @@ Jacob S. Lund, Jeff Murugan, Jonathan P. Shock
 
 ## Overview
 
-How does internal spin affect chaos in classical 2D billiards? We study a
-one-parameter family parametrised by the dimensionless moment of inertia
-$\alpha = I/(mr^2) \in [0,1]$, across four geometries: circle and rectangle
-(integrable), stadium and Sinai (chaotic). Spin reduces chaos but does not
-eliminate it.
+An ordinary billiard ball is a point mass. Give it a moment of inertia and let
+the wall grip it, and each collision exchanges tangential velocity with spin.
+This code simulates that system: a one-parameter family of billiards indexed by
+the dimensionless moment of inertia $\alpha = I/(mr^2) \in [0,1]$, where
+$\alpha = 0$ is the familiar specular billiard and $\alpha = 1$ a thin ring.
 
-The collision law couples the translational and rotational degrees of freedom.
-In the rescaled spin variable $\tilde u = \sqrt{\alpha}\,u$ the energy becomes
-Euclidean and every collision is an orthogonal transformation of
-$(v_x, v_y, \tilde u)$, which is the fact most of the analysis rests on.
+Four geometries are implemented: the circle and rectangle, which are integrable
+without spin, and the stadium and Sinai billiard, which are chaotic. Spin
+weakens the chaos in both: the Lyapunov exponent falls by about two thirds in
+the stadium and three quarters in the Sinai billiard, but never reaches zero.
 
-## What is here, and what is not
+## Contents
 
-This repository contains **code only**: the simulation engine, the scripts that
-generate every figure in the paper, and the pipeline that produces the datasets
-those scripts read.
+The repository holds code: the simulation engine, the scripts that draw every
+figure in the paper, and the pipeline that produces the datasets they read.
 
-It does **not** contain the datasets or the figures. The full result set is
-about 13 GB, too large for version control, and it is reproducible from the
-scripts below. Earlier versions of this repository carried a small subset of
-precomputed data and the figures built from it; both have been removed, since
-they predate the current results.
+It does not hold the datasets or the figures themselves. The full result set
+runs to about 13 GB, which is too large for version control and is in any case
+reproducible from what is here.
 
 ## Simulation engine
 
@@ -82,7 +79,7 @@ can be called directly if you want a smaller slice without a scheduler.
 
 ## Verification
 
-Independent checks of the quantities the paper's argument turns on:
+Independent checks of the main quantities the paper reports:
 
 ```
 kac_step_a_check.py           mean collisions and mean time between curved-wall
@@ -95,8 +92,8 @@ make_fig_ergodicity.py        spread of per-orbit visit frequency against the
 
 ## Requirements
 
-Python 3.8+, NumPy, SciPy, Matplotlib, Numba. The Numba JIT does the heavy
-lifting; the first call to any kernel pays a compilation cost.
+Python 3.8+, NumPy, SciPy, Matplotlib, Numba. Kernels are JIT-compiled, so the first call to each one pays a
+compilation cost.
 
 ```bash
 pip install numpy scipy matplotlib numba
