@@ -114,4 +114,6 @@ Standalone figures (the Poincare section, the island check) run directly from
 
 ## License
 
-Please contact the authors for licensing information.
+MIT. See [LICENSE](LICENSE).
+
+The manuscript text and figures are not covered by this licence; copyright in those is held by the authors and, on publication, by the journal.
